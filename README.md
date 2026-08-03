@@ -7,7 +7,7 @@ Motion-Controlled Cursor: Smooth spatial tracking using IMU data streamed via Py
 
  4-Button Pincer Layout: Integrated tactile buttons mapped for:
 
-   • Left Mouse Button (LMB)
+    • Left Mouse Button (LMB)
 
    • Right Mouse Button (RMB)
 
