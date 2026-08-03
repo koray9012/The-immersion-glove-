@@ -5,23 +5,23 @@ A custom-built DIY wearable wireless glove mouse powered by an ESP32 and an MPU6
 ## Key Features & Layout
 Motion-Controlled Cursor: Smooth spatial tracking using IMU data streamed via Python and Serial communication.
 
-4-Button Pincer Layout: Integrated tactile buttons mapped for:
+ 4-Button Pincer Layout: Integrated tactile buttons mapped for:
 
-  • Left Mouse Button (LMB)
+   • Left Mouse Button (LMB)
 
-  • Right Mouse Button (RMB)
+   • Right Mouse Button (RMB)
 
-  • Scroll
+   • Scroll
 
-  • Movement Freeze (to hold the cursor in place)
+   • Movement Freeze (to hold the cursor in place)
 
-In-Game Haptic Telemetry: Dual vibromotors driven by a Python script connected to Helldivers 2 that delivers dynamic physical feedback for:
+ In-Game Haptic Telemetry: Dual vibromotors driven by a Python script connected to Helldivers 2 that delivers dynamic physical feedback for:
 
-  • Weapon recoil
+   • Weapon recoil
 
-  • Nearby stratagems
+   • Nearby stratagems
 
-  • Heavy weapons
+   • Heavy weapons
 
-  • Explosions
+   • Explosions
                                         
