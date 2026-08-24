@@ -1,7 +1,7 @@
 Haptics & Motion Controller Glove
                                                By Koray
 
-![image alt](https://github.com/koray9012/Haptics-Motion-Glove/blob/main/glove_photo.jpg?raw=true)
+![image alt](https://github.com/koray9012/The-immersion-glove-/blob/main/15501.jpg?raw=true)
 
 A custom-built, motion-controlled ESP32 air mouse glove featuring dynamic haptic feedback, motion-freeze capabilities, and live python telemetry integration designed for PC gaming and heavy weapon control in *Helldivers 2*.
 
