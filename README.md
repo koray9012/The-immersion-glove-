@@ -1,4 +1,4 @@
-                                               Haptics & Motion Controller Glove
+                                                      The immersion Glove
                                                           By Koray
 
 ![image alt](https://github.com/koray9012/The-immersion-glove-/blob/main/15502.jpg?raw=true)
