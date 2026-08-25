@@ -1,0 +1,304 @@
+import serial
+import serial.tools.list_ports
+import time
+import ctypes
+import threading
+import keyboard  # Requires: pip install keyboard
+
+# --- WIN32 API MOUSE DEFINITIONS ---
+MOUSEEVENTF_MOVE       = 0x0001
+MOUSEEVENTF_LEFTDOWN   = 0x0002
+MOUSEEVENTF_LEFTUP     = 0x0004
+MOUSEEVENTF_RIGHTDOWN  = 0x0008
+MOUSEEVENTF_RIGHTUP    = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP   = 0x0040
+
+def move_mouse(dx, dy):
+    ctypes.windll.user32.mouse_event(MOUSEEVENTF_MOVE, int(dx), int(dy), 0, 0)
+
+def mouse_click(flag):
+    ctypes.windll.user32.mouse_event(flag, 0, 0, 0, 0)
+
+def find_esp32_port():
+    ports = serial.tools.list_ports.comports()
+    for port in ports:
+        desc = port.description.upper()
+        if "CH340" in desc or "CP210" in desc or "UART" in desc or "USB" in desc or "SERIAL" in desc:
+            return port.device
+    if len(ports) > 0:
+        return ports[0].device
+    return None
+
+PORT = find_esp32_port()
+if not PORT:
+    print("No ESP32 found! Check USB cable connection.")
+    exit()
+
+print(f"Connecting to ESP32 on {PORT}...")
+try:
+    ser = serial.Serial(PORT, 115200, timeout=0.005)
+except Exception as e:
+    print(f"Error opening port {PORT}: {e}")
+    exit()
+
+time.sleep(1.0)
+
+# =====================================================================
+# --- DYNAMIC SUPPORT WEAPON & STRATAGEM SYSTEM ---
+# =====================================================================
+
+# Modes: "PRIMARY", "SECONDARY", "SUPPORT", "GRENADE"
+active_weapon = "PRIMARY"  
+current_support_weapon = "RECOILLESS" 
+
+# Active Stratagem Call-in Sequence Tracker
+stratagem_buffer = []
+in_stratagem_menu = False
+
+def send_haptic(cmd_string):
+    """Sends haptic pattern trigger to the ESP32 vibromotor."""
+    try:
+        ser.write(f"{cmd_string}\n".encode('utf-8'))
+    except Exception:
+        pass
+
+# --- HAPTIC & RECOIL PROFILE PRODUCERS ---
+def trigger_heavy_kick(kick_y, haptic_cmd, label):
+    print(f"[HAPTIC] {label} FIRED!")
+    move_mouse(0, -kick_y)
+    send_haptic(haptic_cmd)
+
+def trigger_quasar_sequence():
+    def quasar_thread():
+        print("[HAPTIC] QUASAR CANNON CHARGING...")
+        send_haptic("HAP:QUASAR_CHARGE")
+        time.sleep(2.5) 
+        if active_weapon == "SUPPORT":
+            print("[HAPTIC] QUASAR CANNON FIRED!")
+            move_mouse(0, -140)
+            send_haptic("HAP:QUASAR_FIRE")
+    threading.Thread(target=quasar_thread, daemon=True).start()
+
+def trigger_beam_weapon(duration_sec=1.5):
+    def beam_thread():
+        print("[HAPTIC] LASER BEAM ACTIVE...")
+        send_haptic("HAP:BEAM_LOOP")
+        time.sleep(duration_sec)
+        send_haptic("HAP:OFF")
+    threading.Thread(target=beam_thread, daemon=True).start()
+
+# Execute Support Weapon profile on LMB click
+def fire_support_weapon():
+    w = current_support_weapon
+    
+    # Anti-Tank & Rocket Launchers (Massive Kick)
+    if w in ["RECOILLESS", "EAT", "SPEAR", "COMMANDO"]:
+        trigger_heavy_kick(130, "HAP:RECOILLESS", w)
+        
+    # Auto-Cannons & Heavy Machine Guns (Solid Medium Kick)
+    elif w in ["AUTOCANNON", "HMG", "AMR", "RAILGUN"]:
+        trigger_heavy_kick(45, "HAP:AUTOCANNON", w)
+
+    # Machine Guns & Grenade Launchers (Fast Thud Rumbles)
+    elif w in ["MG43", "STALWART", "GRENADE_LAUNCHER"]:
+        trigger_heavy_kick(25, "HAP:RAPID_THUD", w)
+
+    # Charge Weapons
+    elif w == "QUASAR":
+        trigger_quasar_sequence()
+
+    # Beam / Continuous Energy Weapons
+    elif w in ["LASER_CANNON", "FLAMETHROWER"]:
+        trigger_beam_weapon(1.2)
+
+    # Arc Thrower
+    elif w == "ARC_THROWER":
+        trigger_heavy_kick(60, "HAP:ARC_DISCHARGE", "ARC THROWER")
+
+# --- STRATAGEM AUTO-DETECTION ENGINE ---
+# Matches common Helldivers 2 Stratagem D-Pad inputs to select support profiles
+STRATAGEM_MAP = {
+    "SADAD": "RECOILLESS",       # Recoilless Rifle
+    "SASWD": "AUTOCANNON",        # Autocannon
+    "SADWS": "QUASAR",            # Quasar Cannon
+    "SASSW": "EAT",               # Expendable Anti-Tank
+    "SWAAD": "SPEAR",             # SPEAR
+    "SASWA": "AMR",               # Anti-Material Rifle
+    "SASWW": "RAILGUN",           # Railgun
+    "SASSD": "HMG",               # Heavy Machine Gun
+    "SASWS": "MG43",              # Machine Gun
+    "SASAA": "STALWART",          # Stalwart
+    "SAWAS": "GRENADE_LAUNCHER",  # Grenade Launcher
+    "SASAW": "LASER_CANNON",      # Laser Cannon
+    "SAWSA": "FLAMETHROWER",      # Flamethrower
+    "SADSA": "ARC_THROWER",       # Arc Thrower
+}
+
+def on_key_down(e):
+    global active_weapon, in_stratagem_menu, stratagem_buffer, current_support_weapon
+
+    k = e.name.lower()
+
+    # Open / Close Stratagem Menu (Ctrl)
+    if k in ["ctrl", "left ctrl", "right ctrl"]:
+        in_stratagem_menu = True
+        stratagem_buffer.clear()
+        return
+
+    # Track Stratagem Key Sequence (WASD)
+    if in_stratagem_menu and k in ['w', 'a', 's', 'd']:
+        stratagem_buffer.append(k.upper())
+        combo = "".join(stratagem_buffer)
+
+        # Match against known support weapon stratagems
+        for pattern, weapon_name in STRATAGEM_MAP.items():
+            if combo.endswith(pattern):
+                current_support_weapon = weapon_name
+                print(f"[STRATAGEM DETECTED] Armed Support Weapon: {current_support_weapon}")
+                in_stratagem_menu = False
+                stratagem_buffer.clear()
+                break
+        return
+
+    # Direct Slot Switching
+    if k == "1":
+        active_weapon = "PRIMARY"
+        in_stratagem_menu = False
+        print("-> Switched to PRIMARY (1)")
+    elif k == "2":
+        active_weapon = "SECONDARY"
+        in_stratagem_menu = False
+        print("-> Switched to SECONDARY (2)")
+    elif k == "3":
+        active_weapon = "SUPPORT"
+        in_stratagem_menu = False
+        print(f"-> Switched to SUPPORT (3): [{current_support_weapon}]")
+    elif k == "g":
+        active_weapon = "GRENADE"
+        in_stratagem_menu = False
+        print("-> Switched to GRENADE (G)")
+
+keyboard.on_press(on_key_down)
+
+# =====================================================================
+# --- TUNING CONFIGURATION ---
+# =====================================================================
+
+SENS_X = 0.22
+SENS_Y = 0.24   
+
+DEADZONE_X = 0.5
+DEADZONE_Y = 0.5
+
+ALPHA = 0.30
+
+smooth_x = 0.0
+smooth_y = 0.0
+offset_gx = 0.0
+offset_gy = 0.0
+offset_gz = 0.0
+is_frozen = False
+
+def auto_tare():
+    global offset_gx, offset_gy, offset_gz
+    print("\n--- KEEP HAND STILL FOR TARE (2 SECS) ---")
+    ser.reset_input_buffer()
+    sum_gx, sum_gy, sum_gz = 0.0, 0.0, 0.0
+    count = 0
+    start = time.time()
+    
+    while count < 80 and (time.time() - start) < 3.0:
+        line = ser.readline().decode('utf-8', errors='ignore').strip()
+        if line.startswith("RAW:"):
+            try:
+                parts = line[4:].split(',')
+                if len(parts) == 6:
+                    sum_gx += float(parts[3]) / 131.0
+                    sum_gy += float(parts[4]) / 131.0
+                    sum_gz += float(parts[5]) / 131.0
+                    count += 1
+            except ValueError:
+                pass
+        time.sleep(0.005)
+
+    if count > 0:
+        offset_gx = sum_gx / count
+        offset_gy = sum_gy / count
+        offset_gz = sum_gz / count
+        print(f"Zero Bias Set -> GX: {offset_gx:.2f} | GY: {offset_gy:.2f} | GZ: {offset_gz:.2f}\n")
+
+auto_tare()
+print("v16 Helldivers Universal Heavy Weapon Haptic System Active!")
+
+# =====================================================================
+# --- MAIN RUN LOOP ---
+# =====================================================================
+
+try:
+    while True:
+        if ser.in_waiting > 64:
+            ser.reset_input_buffer()
+
+        line = ser.readline().decode('utf-8', errors='ignore').strip()
+        if not line:
+            continue
+
+        # --- BUTTON EVENTS ---
+        if line == "BTN:LMB_D":
+            mouse_click(MOUSEEVENTF_LEFTDOWN)
+            
+            # Fire heavy haptic profile ONLY if support weapon is held
+            if active_weapon == "SUPPORT":
+                fire_support_weapon()
+
+        elif line == "BTN:LMB_U":
+            mouse_click(MOUSEEVENTF_LEFTUP)
+        elif line == "BTN:RMB_D":
+            mouse_click(MOUSEEVENTF_RIGHTDOWN)
+        elif line == "BTN:RMB_U":
+            mouse_click(MOUSEEVENTF_RIGHTUP)
+        elif line == "BTN:MMB_D":
+            mouse_click(MOUSEEVENTF_MIDDLEDOWN)
+        elif line == "BTN:MMB_U":
+            mouse_click(MOUSEEVENTF_MIDDLEUP)
+        elif line == "BTN:FRZ_ON":
+            is_frozen = True
+            print("[MOTION FROZEN]")
+        elif line == "BTN:FRZ_OFF":
+            is_frozen = False
+            smooth_x = 0.0
+            smooth_y = 0.0
+            print("[MOTION UNFROZEN]")
+
+        # --- MOTION PROCESSING ---
+        elif line.startswith("RAW:") and not is_frozen:
+            try:
+                parts = line[4:].split(',')
+                if len(parts) == 6:
+                    gx = (float(parts[3]) / 131.0) - offset_gx
+                    gy = (float(parts[4]) / 131.0) - offset_gy
+                    gz = (float(parts[5]) / 131.0) - offset_gz
+
+                    raw_x = -gx
+                    raw_y = -gz 
+
+                    if abs(raw_x) < DEADZONE_X:
+                        raw_x = 0.0
+                    if abs(raw_y) < DEADZONE_Y:
+                        raw_y = 0.0
+
+                    smooth_x = (ALPHA * raw_x) + ((1 - ALPHA) * smooth_x)
+                    smooth_y = (ALPHA * raw_y) + ((1 - ALPHA) * smooth_y)
+
+                    dx = int(smooth_x * SENS_X)
+                    dy = int(smooth_y * SENS_Y)
+
+                    if dx != 0 or dy != 0:
+                        move_mouse(dx, dy)
+            except ValueError:
+                pass
+
+except KeyboardInterrupt:
+    print("\nAir Mouse stopped.")
+    ser.close()
