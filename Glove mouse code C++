@@ -8,6 +8,7 @@ const int PIN_LMB    = 16;
 const int PIN_RMB    = 17;
 const int PIN_MMB    = 18;
 const int PIN_FREEZE = 19;
+#define PIN_VIBRO 23
 
 // --- ESP-NOW STRUCTS (MATCHES ROVER FIRMWARE) ---
 typedef struct struct_message {
@@ -35,6 +36,121 @@ bool roverConnected = false;
 bool lastLmb = HIGH, lastRmb = HIGH, lastMmb = HIGH, lastFreeze = HIGH;
 unsigned long lastDebounce = 0;
 
+// --- NON-BLOCKING HAPTIC STATE MACHINE ---
+enum HapticState { HAP_IDLE, HAP_SINGLE_PULSE, HAP_QUASAR_RAMP, HAP_DOUBLE_THUMP_1, HAP_DOUBLE_THUMP_GAP, HAP_DOUBLE_THUMP_2 };
+HapticState hapState = HAP_IDLE;
+
+unsigned long hapTimer = 0;
+int quasarPWM = 0;
+
+void triggerHapticPulse(int pwm, unsigned long durationMs) {
+  analogWrite(PIN_VIBRO, pwm);
+  hapTimer = millis() + durationMs;
+  hapState = HAP_SINGLE_PULSE;
+}
+
+void triggerQuasarCharge() {
+  quasarPWM = 30;
+  analogWrite(PIN_VIBRO, quasarPWM);
+  hapTimer = millis() + 40;
+  hapState = HAP_QUASAR_RAMP;
+}
+
+void triggerDoubleThump() {
+  analogWrite(PIN_VIBRO, 255);
+  hapTimer = millis() + 120;
+  hapState = HAP_DOUBLE_THUMP_1;
+}
+
+void updateHaptics() {
+  unsigned long now = millis();
+
+  switch (hapState) {
+    case HAP_SINGLE_PULSE:
+      if (now >= hapTimer) {
+        analogWrite(PIN_VIBRO, 0);
+        hapState = HAP_IDLE;
+      }
+      break;
+
+    case HAP_QUASAR_RAMP:
+      if (now >= hapTimer) {
+        quasarPWM += 5;
+        if (quasarPWM >= 255) {
+          analogWrite(PIN_VIBRO, 255);
+          hapState = HAP_IDLE;
+        } else {
+          analogWrite(PIN_VIBRO, quasarPWM);
+          hapTimer = now + 40;
+        }
+      }
+      break;
+
+    case HAP_DOUBLE_THUMP_1:
+      if (now >= hapTimer) {
+        analogWrite(PIN_VIBRO, 50);
+        hapTimer = now + 80;
+        hapState = HAP_DOUBLE_THUMP_GAP;
+      }
+      break;
+
+    case HAP_DOUBLE_THUMP_GAP:
+      if (now >= hapTimer) {
+        analogWrite(PIN_VIBRO, 255);
+        hapTimer = now + 150;
+        hapState = HAP_DOUBLE_THUMP_2;
+      }
+      break;
+
+    case HAP_DOUBLE_THUMP_2:
+      if (now >= hapTimer) {
+        analogWrite(PIN_VIBRO, 0);
+        hapState = HAP_IDLE;
+      }
+      break;
+
+    case HAP_IDLE:
+    default:
+      break;
+  }
+}
+
+void handleIncomingHaptics() {
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+
+    if (cmd == "HAP:RECOILLESS") {
+      triggerHapticPulse(255, 180);
+    } 
+    else if (cmd == "HAP:AUTOCANNON") {
+      triggerHapticPulse(220, 60);
+    } 
+    else if (cmd == "HAP:RAPID_THUD") {
+      triggerHapticPulse(180, 40);
+    }
+    else if (cmd == "HAP:ARC_DISCHARGE") {
+      triggerHapticPulse(240, 100);
+    }
+    else if (cmd == "HAP:BEAM_LOOP") {
+      triggerHapticPulse(150, 200);
+    }
+    else if (cmd == "HAP:QUASAR_CHARGE") {
+      triggerQuasarCharge();
+    } 
+    else if (cmd == "HAP:QUASAR_FIRE") {
+      triggerHapticPulse(255, 250);
+    }
+    else if (cmd == "HAP:SENTRY_MORTAR" || cmd == "HAP:ORBITAL_IMPACT") {
+      triggerDoubleThump();
+    }
+    else if (cmd == "HAP:OFF") {
+      analogWrite(PIN_VIBRO, 0);
+      hapState = HAP_IDLE;
+    }
+  }
+}
+
 // Callback when rover replies with its identity
 void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingData, int len) {
   if (len == sizeof(IdentityMessage)) {
@@ -48,6 +164,9 @@ void setup() {
   Wire.begin(21, 22);
   Wire.setClock(400000);
   
+  pinMode(PIN_VIBRO, OUTPUT);
+  analogWrite(PIN_VIBRO, 0);
+
   // Wake MPU6050
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(0x6B);
@@ -83,6 +202,10 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
+
+  // Process incoming haptic trigger strings from PC Python script
+  handleIncomingHaptics();
+  updateHaptics();
 
   // 1. Button Handling & State Updates
   if (now - lastDebounce > 15) {
@@ -129,12 +252,10 @@ void loop() {
     Serial.println(gz);
 
     // 3. Convert Hand Gestures 1:1 with Mouse Direction
-    // Pitch (AY): Hand tilt down/up -> Forward / Reverse
-    // Yaw (GZ): Wrist turn left/right -> Left / Right steering
     int throttle = map(constrain(ay, -8000, 8000), -8000, 8000, -255, 255);
     int steering = map(constrain(gz, -8000, 8000), -8000, 8000, -255, 255);
 
-    // Deadzone filter to keep rover still on minor rests
+    // Deadzone filter
     if (abs(throttle) < 30) throttle = 0;
     if (abs(steering) < 30) steering = 0;
 
