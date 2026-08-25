@@ -82,7 +82,7 @@ Below is the visual schematic diagram for the Haptics & Motion Controller Glove.
 
 ## Code:
 
-The code can be found in repo: Haptics & Motion Glove Code
+The code can be found in repo: Mouse Glove C++ , Mouse glove Python
 
 ## Bill of materials:
 
