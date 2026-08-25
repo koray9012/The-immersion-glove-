@@ -94,7 +94,7 @@ The code can be found in repo: Haptics & Motion Glove Code
 | 2N2222 NPN Transistor & Resistors | 1 | 0.15 USD | https://elimex.bg/product/87794-2n2222a-to-92 |
 | Buttons | 4 | 0.30 USD x4 = 1.20 USD | https://elimex.bg/product/84643-microbuton-12-12-h-7-3 |
 | Wearable Glove Base & Straps | 1 | 5.00 USD | DIY / Fabric Base |
-| Jumper Cables | ~20 | 2.86 USD | https://elimex.bg/product/75823-komplekt-provodnitsi-40-broya-s-konektori-mazhki-zhenski-30sm |
+| Jumper Cables | ~30 | 2.86 USD | https://elimex.bg/product/75823-komplekt-provodnitsi-40-broya-s-konektori-mazhki-zhenski-30sm |
 
 ## Very important: The custom wire harnesses were cut to size, heat-shrink sleeved, and hand-soldered directly to finger switch contacts.
 
