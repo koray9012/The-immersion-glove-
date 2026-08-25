@@ -1,0 +1,153 @@
+#include <Wire.h>
+#include <WiFi.h>
+#include <esp_now.h>
+
+// --- PIN DEFINITIONS ---
+const int MPU_ADDR   = 0x68;
+const int PIN_LMB    = 16;
+const int PIN_RMB    = 17;
+const int PIN_MMB    = 18;
+const int PIN_FREEZE = 19;
+
+// --- ESP-NOW STRUCTS (MATCHES ROVER FIRMWARE) ---
+typedef struct struct_message {
+  int speedLeft;     // -255 to 255
+  int speedRight;    // -255 to 255
+  bool lmb;          
+  bool rmb;
+  bool mmb;
+  bool isFrozen;     // Motion Pause Flag
+} struct_message;
+
+struct_message gloveData;
+
+typedef struct IdentityMessage {
+  char name[32];
+} IdentityMessage;
+
+IdentityMessage incomingIdentity;
+
+// ESP-NOW Broadcast MAC for automatic rover discovery
+uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+bool roverConnected = false;
+
+// Debounce & Timing
+bool lastLmb = HIGH, lastRmb = HIGH, lastMmb = HIGH, lastFreeze = HIGH;
+unsigned long lastDebounce = 0;
+
+// Callback when rover replies with its identity
+void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingData, int len) {
+  if (len == sizeof(IdentityMessage)) {
+    memcpy(&incomingIdentity, incomingData, sizeof(incomingIdentity));
+    roverConnected = true;
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(21, 22);
+  Wire.setClock(400000);
+  
+  // Wake MPU6050
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B);
+  Wire.write(0x00);
+  Wire.endTransmission(true);
+
+  pinMode(PIN_LMB, INPUT_PULLUP);
+  pinMode(PIN_RMB, INPUT_PULLUP);
+  pinMode(PIN_MMB, INPUT_PULLUP);
+  pinMode(PIN_FREEZE, INPUT_PULLUP);
+
+  // Set Wi-Fi to STA mode for ESP-NOW
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW Init Failed");
+    return;
+  }
+
+  esp_now_register_recv_cb(OnDataRecv);
+
+  // Register Broadcast Peer
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+  peerInfo.channel = 0;  
+  peerInfo.encrypt = false;
+  
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("Failed to add broadcast peer");
+  }
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  // 1. Button Handling & State Updates
+  if (now - lastDebounce > 15) {
+    bool lmb = digitalRead(PIN_LMB);
+    bool rmb = digitalRead(PIN_RMB);
+    bool mmb = digitalRead(PIN_MMB);
+    bool frz = digitalRead(PIN_FREEZE);
+
+    if (lmb != lastLmb) { lastLmb = lmb; Serial.println(lmb == LOW ? "BTN:LMB_D" : "BTN:LMB_U"); }
+    if (rmb != lastRmb) { lastRmb = rmb; Serial.println(rmb == LOW ? "BTN:RMB_D" : "BTN:RMB_U"); }
+    if (mmb != lastMmb) { lastMmb = mmb; Serial.println(mmb == LOW ? "BTN:MMB_D" : "BTN:MMB_U"); }
+    if (frz != lastFreeze) { lastFreeze = frz; Serial.println(frz == LOW ? "BTN:FRZ_ON" : "BTN:FRZ_OFF"); }
+
+    gloveData.lmb = (lmb == LOW);
+    gloveData.rmb = (rmb == LOW);
+    gloveData.mmb = (mmb == LOW);
+    gloveData.isFrozen = (frz == LOW);
+
+    lastDebounce = now;
+  }
+
+  // 2. Read MPU6050 Motion Sensors
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDR, 14, true);
+
+  if (Wire.available() >= 14) {
+    int16_t ax = (Wire.read() << 8 | Wire.read());
+    int16_t ay = (Wire.read() << 8 | Wire.read());
+    int16_t az = (Wire.read() << 8 | Wire.read());
+    Wire.read(); Wire.read(); // Skip Temp
+    int16_t gx = (Wire.read() << 8 | Wire.read());
+    int16_t gy = (Wire.read() << 8 | Wire.read());
+    int16_t gz = (Wire.read() << 8 | Wire.read());
+
+    // USB Serial stream for Python PC Mouse driver
+    Serial.print("RAW:");
+    Serial.print(ax); Serial.print(",");
+    Serial.print(ay); Serial.print(",");
+    Serial.print(az); Serial.print(",");
+    Serial.print(gx); Serial.print(",");
+    Serial.print(gy); Serial.print(",");
+    Serial.println(gz);
+
+    // 3. Convert Hand Gestures 1:1 with Mouse Direction
+    // Pitch (AY): Hand tilt down/up -> Forward / Reverse
+    // Yaw (GZ): Wrist turn left/right -> Left / Right steering
+    int throttle = map(constrain(ay, -8000, 8000), -8000, 8000, -255, 255);
+    int steering = map(constrain(gz, -8000, 8000), -8000, 8000, -255, 255);
+
+    // Deadzone filter to keep rover still on minor rests
+    if (abs(throttle) < 30) throttle = 0;
+    if (abs(steering) < 30) steering = 0;
+
+    // Mix throttle and steering into differential motor speeds
+    int leftMotor  = throttle + steering;
+    int rightMotor = throttle - steering;
+
+    gloveData.speedLeft  = constrain(leftMotor, -255, 255);
+    gloveData.speedRight = constrain(rightMotor, -255, 255);
+
+    // 4. Send Packet via ESP-NOW Broadcast
+    esp_now_send(broadcastAddress, (uint8_t *)&gloveData, sizeof(gloveData));
+  }
+
+  delay(8); // ~125Hz polling rate
+}
